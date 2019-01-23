@@ -10,6 +10,7 @@ Linguistics.use(:en, monkeypatch: false)
 class Lexicon
   @@path = File.join(File.dirname(__FILE__), 'lexicon')
   SPACE = ' '
+  attr_reader :word_pos_frequencies
 
   def initialize
     @lemm = Lemmatizer.new
@@ -198,21 +199,33 @@ class Lexicon
   end
 
   def find_synonyms(word)
-    # Wordnet may contain this word as different lemmas with different POS
-    synonyms = if (wordnet_lemmas = WordNet::Lemma.find_all(word)).any?
-      wordnet_lemmas.flat_map do |wordnet_lemma|
-        cleaned_wordnet_syns(wordnet_lemma)
-      end
+    wordnet_pos_tags = WordNet::Lemma.find_all(word).map(&:pos)
 
-    # Otherwise, assume word is an inflected form and attempt to lemmatize
-    else
-      pos_lemma_syns(word)
-    end.uniq
+    synonyms = wordnet_pos_tags.flat_map do |tag|
+      lookup_syns(word, tag.to_sym)
+    end
+
+    # Look up POS frequencies for all known POS for word
+    frequency_tags = @word_pos_frequencies[word]&.keys || []
+
+    # Remove all that wordnet already had
+    frequency_tags -= wordnet_pos_tags.map { |t| normalise_pos_tag(t) }
+
+    # Get the lemma
+    lemma = @lemm.lemma(word)
+
+    # Find/generate synonyms for each known POS for word
+    synonyms += frequency_tags.flat_map do |pos|
+      inflected_syns(lemma, pos)
+    end
+
+    # Remove the word itself
+    synonyms.delete(word)
 
     # Exclude all synonyms that are closely related to the word including:
     # - Alternative spellings
     # - Hyphenated and non-hyphenated variants
-    # - Related words, eg. stagecoach and coach
+    # - Related words, eg. 'stagecoach' and 'coach'
     synonyms.reject do |syn|
       syn = syn.downcase.tr('-', '')
       word = word.downcase.tr('-', '')
@@ -240,53 +253,51 @@ class Lexicon
     end
   end
 
-  def pos_lemma_syns(word)
-    # Get the part of speech
-    pos_frequencies = @word_pos_frequencies[word]
-    return [] if pos_frequencies.nil?
-    pos = pos_frequencies.max_by { |_, v| v }[0]
+  def normalise_pos_tag(tag)
+    case tag.to_sym
+    # Noun
+    when :n then :nn
+    # Verb
+    when :v then :vbp
+    # Adjective
+    when :a then :jj
+    # Adverb
+    when :r then :rb
+    end
+  end
 
-    # Get the lemma
-    lemma = @lemm.lemma(word)
-
-    generated_syns = []
-
-    case pos
-    # Present forms. Should be same as lemma?
-    when 'vb', 'vbp'
-      if word != lemma
-        puts "Unexpected POS: #{pos}, for word \"#{word}\" (lemma: \"#{lemma}\")"
-      end
-
-    # Plural nouns
-    when 'nnps', 'nns'
-      generated_syns += inflected_lemma_syns(lemma, :noun) do |lemma_syn|
+  def inflected_syns(lemma, pos)
+    generated_syns = case pos
+    when :vb, :vbp, :jj, :nn, :nnp
+      # Not inflected
+      []
+    when :fw, :in, :ls, :sym, :det, :in, :uh, :ppc, :pp, :ppd, :ppl, :ppr,
+      :cd, :wrb, :wdt, :cc, :md, :wp, :wps, :pdt
+      # Known not handled
+      []
+    when :nnps, :nns
+      # Plural nouns
+      lookup_syns(lemma, :noun) do |lemma_syn|
         lemma_syn.en.plural
       end
-
-    # Verb: past tense (vbn = past/passive participle)
-    when 'vbd', 'vbn'
-      generated_syns += conjugated_verb_syns(lemma, :past)
-
-    # Verb: present participle (gerund)
-    when 'vbg'
-      generated_syns += conjugated_verb_syns(lemma, :present_participle)
-
-    # Verb: present, third person singular
-    when 'vbz'
-      generated_syns += conjugated_verb_syns(lemma, :present, :third_person_singular)
-
+    when :vbd, :vbn
+      # Verb: past tense (vbn = past/passive participle)
+      conjugated_verb_syns(lemma, :past)
+    when :vbg
+      # Verb: present participle (gerund)
+      conjugated_verb_syns(lemma, :present_participle)
+    when :vbz
+      # Verb: present, third person singular
+      conjugated_verb_syns(lemma, :present, :third_person_singular)
     else
-      #puts "Unhandled POS: #{pos}, for word \"#{word}\""
+      # puts "Unhandled POS: #{pos}"
+      []
     end
 
-    generated_syns.delete(word)
-    # Exclude any non-words that were generated as plurals
-    generated_syns.select! do |syn|
+    # Exclude any non-words generated
+    generated_syns.select do |syn|
       contains?(syn)
     end
-    #puts generated_syns.join(", ") if generated_syns.any?
-    generated_syns
   end
 
   def americanize(word)
@@ -294,17 +305,17 @@ class Lexicon
   end
 
   def conjugated_verb_syns(lemma, tense, person=nil)
-    inflected_lemma_syns(lemma, :verb) do |lemma_syn|
+    lookup_syns(lemma, :verb) do |lemma_syn|
       lemma_syn.en.conjugate(tense, person)
     end
   end
 
   # Search wordnet for the lemma with a given POS and return inflected versions
   # of each synonym according to the block given.
-  def inflected_lemma_syns(lemma, pos, &block)
+  def lookup_syns(lemma, pos, &block)
     if (wordnet_lemma = WordNet::Lemma.find(lemma, pos))
       lemma_syns = cleaned_wordnet_syns(wordnet_lemma)
-      lemma_syns.map(&block)
+      block_given? ? lemma_syns.map(&block) : lemma_syns
     else
       []
     end
@@ -335,7 +346,7 @@ private
         pairs = Hash.new
         items.each do |i|
           /([^:]+):\s*(.+)/ =~ i
-          pairs[$1] = $2.to_f
+          pairs[$1.to_sym] = $2.to_f
         end
         @word_pos_frequencies[key] = pairs
       end
