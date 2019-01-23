@@ -222,6 +222,8 @@ class Lexicon
     # Remove the word itself
     synonyms.delete(word)
 
+    synonyms.uniq!
+
     # Exclude all synonyms that are closely related to the word including:
     # - Alternative spellings
     # - Hyphenated and non-hyphenated variants
