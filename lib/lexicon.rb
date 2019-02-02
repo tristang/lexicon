@@ -10,7 +10,7 @@ Linguistics.use(:en, monkeypatch: false)
 class Lexicon
   @@path = File.join(File.dirname(__FILE__), 'lexicon')
   SPACE = ' '
-  attr_reader :word_pos_frequencies
+  attr_reader :word_pos_frequencies, :ngram_frequencies
 
   def initialize
     @lemm = Lemmatizer.new
@@ -24,7 +24,21 @@ class Lexicon
     @conf[:word_pos_frequencies_path]         = File.join(@@path, 'word_pos_frequencies.marshal')
     @conf[:dictionary_path]                   = File.join(@@path, 'dictionary.marshal')
     @conf[:reverse_dictionary_path]           = File.join(@@path, 'reverse_dictionary.marshal')
+    @conf[:ngrams_path]           = File.join(@@path, '1grams.hash')
 
+    # Always present
+    puts "Loading ngrams from marshal"
+    @ngram_frequencies = load_file(@conf[:ngrams_path])
+    puts "Loading culling"
+    @ngram_frequencies.select! do |k, v|
+      # Only letters (upper/lower), hypens, underscores (POS), and apostrophes
+      k =~ /^[a-z][a-z\-\'\_]*$/i &&
+      v > 5000 &&
+      # 'I' and 'a' are the only single letter words
+      (k.length > 1 || k =~ /Ia/s)
+    end
+
+    # Cached marshal objects
     if File.exists?(@conf[:word_list_path]) &&
        File.exists?(@conf[:uk_to_us_path]) &&
        File.exists?(@conf[:dictionary_path]) &&
@@ -37,6 +51,8 @@ class Lexicon
       @dictionary = load_file(@conf[:dictionary_path])
       @reverse_dictionary = load_file(@conf[:reverse_dictionary_path])
       @word_pos_frequencies = load_file(@conf[:word_pos_frequencies_path])
+
+
       @size = @word_list.length
     else
       puts "Rebuilding everything..."
@@ -370,7 +386,7 @@ class Lexicon
 
     # Exclude any non-words generated
     generated_syns.select do |syn|
-      contains?(syn)
+      @ngram_frequencies[syn].to_i > 0
     end
   end
 
@@ -379,8 +395,7 @@ class Lexicon
   end
 
 
-  # Search wordnet for the lemma with a given POS and return inflected versions
-  # of each synonym according to the block given.
+  # Search wordnet for the lemma with a given POS and return cleaned syn list
   def wordnet_lookup_syns(lemma, pos)
     # Convert back to wordnet format
     lemma = lemma.tr(' ', '_')
@@ -507,4 +522,4 @@ class DictNode < Hash
   end
 end
 
-#binding.pry
+binding.pry
