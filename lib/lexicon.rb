@@ -256,7 +256,7 @@ class Lexicon
     wordnet_pos_tags = WordNet::Lemma.find_all(word).map(&:pos)
 
     synonyms = wordnet_pos_tags.flat_map do |tag|
-      lookup_syns(word, tag.to_sym)
+      wordnet_lookup_syns(word, tag.to_sym)
     end
 
     # Look up POS frequencies for all known POS for word
@@ -331,18 +331,24 @@ class Lexicon
       []
     when :nnps, :nns
       # Plural nouns
-      lookup_syns(lemma, :noun) do |lemma_syn|
+      wordnet_lookup_syns(lemma, :noun).map do |lemma_syn|
         lemma_syn.en.plural
       end
     when :vbd, :vbn
       # Verb: past tense (vbn = past/passive participle)
-      conjugated_verb_syns(lemma, :past)
+      wordnet_lookup_syns(lemma, :verb).map do |lemma_syn|
+        lemma_syn.en.conjugate(:past)
+      end
     when :vbg
       # Verb: present participle (gerund)
-      conjugated_verb_syns(lemma, :present_participle)
+      wordnet_lookup_syns(lemma, :verb).map do |lemma_syn|
+        lemma_syn.en.conjugate(:present_participle)
+      end
     when :vbz
       # Verb: present, third person singular
-      conjugated_verb_syns(lemma, :present, :third_person_singular)
+      wordnet_lookup_syns(lemma, :verb).map do |lemma_syn|
+        lemma_syn.en.conjugate(:present, :third_person_singular)
+      end
     else
       # puts "Unhandled POS: #{pos}"
       []
@@ -358,31 +364,21 @@ class Lexicon
     @uk_to_us[word] || word
   end
 
-  def conjugated_verb_syns(lemma, tense, person=nil)
-    lookup_syns(lemma, :verb) do |lemma_syn|
-      lemma_syn.en.conjugate(tense, person)
-    end
-  end
 
   # Search wordnet for the lemma with a given POS and return inflected versions
   # of each synonym according to the block given.
-  def lookup_syns(lemma, pos, &block)
+  def wordnet_lookup_syns(lemma, pos)
     if (wordnet_lemma = WordNet::Lemma.find(lemma, pos))
-      lemma_syns = cleaned_wordnet_syns(wordnet_lemma)
-      block_given? ? lemma_syns.map(&block) : lemma_syns
+      # Fetch all synonyms (combining all senses of the word)
+      wordnet_lemma.synsets.flat_map(&:words).map do |w|
+        # Clean up the output
+        # - Adjectives can have an adjective marker at their end which needs be
+        #   stripped. Eg. beautiful(ip), beautiful(p), beautiful(a)
+        # - Replace underscores with spaces
+        w.gsub(/\([a-z]*\)$/, '').tr('_', ' ')
+      end
     else
       []
-    end
-  end
-
-  def cleaned_wordnet_syns(wordnet_lemma)
-    # Fetch all synonyms (combining all senses of the word)
-    wordnet_lemma.synsets.flat_map(&:words).map do |w|
-      # Clean up the output
-      # - Adjectives can have an adjective marker at their end which needs be
-      #   stripped. Eg. beautiful(ip), beautiful(p), beautiful(a)
-      # - Replace underscores with spaces
-      w.gsub(/\([a-z]*\)$/, '').tr('_', ' ')
     end
   end
 
@@ -494,3 +490,5 @@ class DictNode < Hash
     lemma == self
   end
 end
+
+binding.pry
