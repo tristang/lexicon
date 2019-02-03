@@ -9,4 +9,8 @@ Gem::Specification.new do |s|
   s.files       = ["lib/lexicon.rb"]
   s.homepage    = ''
   s.license       = 'MIT'
+  s.add_runtime_dependency 'rwordnet'
+  s.add_runtime_dependency 'ruby-progressbar'
+  s.add_runtime_dependency 'lemmatizer'
+  s.add_runtime_dependency 'linguistics'
 end

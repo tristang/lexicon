@@ -63,6 +63,7 @@ class Lexicon
     # POS frequencies
     create_word_pos_frequencies
     @dictionary = generate_dictionary(@word_list)
+    link_all_lemmas
     link_all_synonyms
     File.open(@conf[:dictionary_path], 'w') do |file|
       Marshal.dump(@dictionary, file)
@@ -150,7 +151,7 @@ class Lexicon
     self[word]&.is_word
   end
 
-  def [](string)
+  def lookup(string)
     position = @dictionary
     string.chars.each do |c|
       return nil unless position[c]
@@ -158,6 +159,7 @@ class Lexicon
     end
     position
   end
+  alias_method :[], :lookup
 
   # Building methods
   def generate_dictionary(words, reverse: false)
@@ -181,6 +183,57 @@ class Lexicon
     dictionary
   end
 
+  def link_all_lemmas
+    bar = ProgressBar.create(title: 'Linking lemmas', total: @size, throttle_rate: 0.1)
+    link_lemmas(@dictionary) do
+      bar.increment
+    end
+  end
+
+  def link_lemmas(node, &block)
+    if node.is_word
+      # Link this node to the node of its lemma (which may be itself)
+      node.lemma = self[@lemm.lemma(node.to_s)] || node
+
+      # Link each lemma to all of its inflected forms
+      if node.lemma?
+        # Stringify once
+        word = node.to_s
+
+        # Look up POS frequencies for all known POS for word
+        poss = @word_pos_frequencies[word]&.keys || []
+
+        poss.each do |pos|
+          case pos
+          when :vb, :vbp
+            [:past, :present_participle, :third_person_present].each do |tense|
+              if tense == :third_person_present
+                conjugation = word.en.conjugate(:present, :third_person_singular)
+              else
+                conjugation = word.en.conjugate(tense)
+              end
+              if (inflection_node = lookup(conjugation))
+                node.inflections[tense] = inflection_node
+              end
+            end
+          when :nn, :nnp
+            if (plural = lookup(word.en.plural))
+              node.inflections[:plural] = plural
+            end
+          end
+        end
+
+      end
+
+      # Callback at each word processed
+      yield
+    end
+
+    node.each do |char, n|
+      link_lemmas(n, &block)
+    end
+  end
+
   def link_all_synonyms
     bar = ProgressBar.create(title: 'Syns', total: @size, throttle_rate: 0.1)
     link_synonyms(@dictionary) do
@@ -188,9 +241,9 @@ class Lexicon
     end
   end
 
-  def link_synonyms(node=@dictionary, &block)
+  def link_synonyms(node, &block)
     if node.is_word
-      node.synonyms = find_synonyms(node.to_s)
+      node.synonyms = find_synonyms(node)
       yield
     end
     node.each do |char, n|
@@ -198,7 +251,8 @@ class Lexicon
     end
   end
 
-  def find_synonyms(word)
+  def find_synonyms(node)
+    word = node.to_s
     wordnet_pos_tags = WordNet::Lemma.find_all(word).map(&:pos)
 
     synonyms = wordnet_pos_tags.flat_map do |tag|
@@ -211,11 +265,9 @@ class Lexicon
     # Remove all that wordnet already had
     frequency_tags -= wordnet_pos_tags.map { |t| normalise_pos_tag(t) }
 
-    # Get the lemma
-    lemma = @lemm.lemma(word)
-
-    # Find/generate synonyms for each known POS for word
+    # Find/generate synonyms for each known POS for word inflected from its lemma
     synonyms += frequency_tags.flat_map do |pos|
+      lemma = (node.lemma || node).to_s
       inflected_syns(lemma, pos)
     end
 
@@ -373,13 +425,14 @@ private
 end
 
 class DictNode < Hash
-  attr_accessor :is_word, :synonyms
-  attr_reader :character
+  attr_accessor :is_word, :synonyms, :lemma
+  attr_reader :character, :inflections
 
   def initialize(character = nil, parent = nil)
     @character = character
     @parent = parent
     @synonyms = []
+    @inflections = {}
   end
 
   def to(target, character_comparator: nil, destination_comparator: nil, deep_search: false)
@@ -430,5 +483,14 @@ class DictNode < Hash
 
   def to_s
     full_path.join
+  end
+
+  def inspect
+    "<DictNode word='#{self.is_word ? self.to_s : '-'}' lemma=#{lemma? ? 'true' : 'false'}>"
+  end
+
+  # A node is a lemma if its lemma is itself
+  def lemma?
+    lemma == self
   end
 end
