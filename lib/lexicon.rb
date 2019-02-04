@@ -76,41 +76,55 @@ class Lexicon
   end
 
   def create_word_list
+    # Only letters, apostrophes, spaces and hyphens allowed.
+    # Can't start with punctuation.
+    # Must start with a lette
+    word_regex = /^[a-z][a-z\-\'\ ]{1,15}$/i
+
     words = []
-    phrases = []
     discarded = []
+    puts "Adding words from UKACD"
     File.open(@conf[:word_list_source_path], 'r') do |fh|
       fh.each_line do |line|
         line.chomp!
-        if line.include?(SPACE)
-          phrases << line
+        if line =~ word_regex
+          words << line
         else
-          # Only letters, apostrophes and hyphens allowed.
-          # Can't start with punctuation.
-          if line =~ /^[a-z][a-z\-\']*$/i
-            words << line
-          else
-            discarded << discarded
-          end
+          discarded << discarded
+        end
+      end
+    end
+    puts "Discarded #{discarded.length} words."
+    puts "Kept #{words.length} words from UKACD."
+    p
+
+    puts "Adding words from WordNet"
+    # Prime the wordnet cache
+    WordNet::Lemma.find_all("")
+    discarded = []
+    # Wordnet's cache has one hash for each POS with words as keys and the
+    # WordNet space separated database line as values
+    WordNet::Lemma.class_variable_get("@@cache").each do |pos, rows|
+      rows.each do |word, data|
+        word = word.gsub('_', ' ')
+        if word =~ word_regex
+          words << word
+        else
+          discarded << discarded
         end
       end
     end
 
-    puts "Discarded #{discarded.length} words."
-    puts "Discarded #{phrases.length} phrases."
+    puts "Discarded #{discarded.length} from wordnet"
+    puts "Increased to #{words.length}"
+    words.uniq!
+    puts "Recuded to #{words.length}"
 
     File.open(@conf[:word_list_path], 'w') do |file|
       Marshal.dump(words, file)
     end
-    puts "Stored #{words.length} words."
-
-    #File.open(File.join(@@path, 'phrases.marshal'), 'w') do |file|
-    #  Marshal.dump(phrases, file)
-    #end
-    #puts "Stored #{phrases.length} phrases."
 
     @word_list = words
-    #@phrase_list = phrases
   end
 
   def find(string)
@@ -253,7 +267,7 @@ class Lexicon
 
   def find_synonyms(node)
     word = node.to_s
-    wordnet_pos_tags = WordNet::Lemma.find_all(word).map(&:pos)
+    wordnet_pos_tags = WordNet::Lemma.find_all(word.tr(' ', '_')).map(&:pos)
 
     synonyms = wordnet_pos_tags.flat_map do |tag|
       wordnet_lookup_syns(word, tag.to_sym)
@@ -368,6 +382,8 @@ class Lexicon
   # Search wordnet for the lemma with a given POS and return inflected versions
   # of each synonym according to the block given.
   def wordnet_lookup_syns(lemma, pos)
+    # Convert back to wordnet format
+    lemma = lemma.tr(' ', '_')
     if (wordnet_lemma = WordNet::Lemma.find(lemma, pos))
       # Fetch all synonyms (combining all senses of the word)
       wordnet_lemma.synsets.flat_map(&:words).map do |w|
@@ -491,4 +507,4 @@ class DictNode < Hash
   end
 end
 
-binding.pry
+#binding.pry
