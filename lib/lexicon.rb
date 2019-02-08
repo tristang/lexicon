@@ -92,7 +92,8 @@ class Lexicon
       Marshal.dump(@dictionary, file)
     end
 
-    @reverse_dictionary = generate_dictionary(@word_list, reverse: true)
+    # Reverse words for reverse lookups (ends-with search)
+    @reverse_dictionary = generate_dictionary(@word_list.map(&:reverse))
     File.open(@conf[:reverse_dictionary_path], 'w') do |file|
       Marshal.dump(@reverse_dictionary, file)
     end
@@ -203,10 +204,8 @@ class Lexicon
   alias_method :[], :lookup
 
   # Building methods
-  def generate_dictionary(words, reverse: false)
-    print "Generating #{'reverse' if reverse} dictionary tree... "
-    # Reverse words for reverse lookups (ends-with search)
-    words = words.map(&:reverse) if reverse
+  def generate_dictionary(words)
+    print "Generating dictionary tree... "
     # Make the dictionary
     dictionary = DictNode.new
     words.each do |word|
