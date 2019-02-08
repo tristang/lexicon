@@ -10,7 +10,7 @@ Linguistics.use(:en, monkeypatch: false)
 class Lexicon
   @@path = File.join(File.dirname(__FILE__), 'lexicon')
   SPACE = ' '
-  attr_reader :word_pos_frequencies
+  attr_reader :word_pos_frequencies, :ngram_frequencies, :word_list
 
   def initialize
     @lemm = Lemmatizer.new
@@ -24,7 +24,28 @@ class Lexicon
     @conf[:word_pos_frequencies_path]         = File.join(@@path, 'word_pos_frequencies.marshal')
     @conf[:dictionary_path]                   = File.join(@@path, 'dictionary.marshal')
     @conf[:reverse_dictionary_path]           = File.join(@@path, 'reverse_dictionary.marshal')
+    @conf[:ngrams_path]           = File.join(@@path, '1grams.hash.trimmed')
 
+    # Always present
+    puts "Loading ngrams from marshal"
+    @ngram_frequencies = load_file(@conf[:ngrams_path])
+    puts "Culling ngrams"
+    @ngram_frequencies.select! do |k, v|
+      # Only letters (upper/lower), hypens, apostrophes, and spaces
+      # Exclude _POS tagged entries for now
+      k =~ /^[a-z][a-z\-\'\ ]*$/i &&
+      # Exclude uncommon words
+      v >= 5000 &&
+      # 'I' and 'a' are the only single letter words
+      (k.length > 1 || k =~ /Ia/)
+    end
+
+    # Save trimmed for reuse
+    File.open(@conf[:ngrams_path] + '.trimmed', 'w') do |file|
+      Marshal.dump(@ngram_frequencies, file)
+    end
+
+    # Cached marshal objects
     if File.exists?(@conf[:word_list_path]) &&
        File.exists?(@conf[:uk_to_us_path]) &&
        File.exists?(@conf[:dictionary_path]) &&
@@ -37,6 +58,8 @@ class Lexicon
       @dictionary = load_file(@conf[:dictionary_path])
       @reverse_dictionary = load_file(@conf[:reverse_dictionary_path])
       @word_pos_frequencies = load_file(@conf[:word_pos_frequencies_path])
+
+
       @size = @word_list.length
     else
       puts "Rebuilding everything..."
@@ -75,19 +98,23 @@ class Lexicon
     end
   end
 
-  def create_word_list
+  def is_valid_word(word)
     # Only letters, apostrophes, spaces and hyphens allowed.
     # Can't start with punctuation.
-    # Must start with a lette
-    word_regex = /^[a-z][a-z\-\'\ ]{1,15}$/i
+    # Must start with a letter.
+    return false unless word =~ /^[a-z][a-z\-\'\ ]{1,15}$/i
+    # Single words must be present in 1grams
+    word[SPACE] || @ngram_frequencies[word].to_i > 0
+  end
 
+  def create_word_list
     words = []
     discarded = []
     puts "Adding words from UKACD"
     File.open(@conf[:word_list_source_path], 'r') do |fh|
       fh.each_line do |line|
         line.chomp!
-        if line =~ word_regex
+        if is_valid_word(line)
           words << line
         else
           discarded << discarded
@@ -107,7 +134,7 @@ class Lexicon
     WordNet::Lemma.class_variable_get("@@cache").each do |pos, rows|
       rows.each do |word, data|
         word = word.gsub('_', ' ')
-        if word =~ word_regex
+        if is_valid_word(word)
           words << word
         else
           discarded << discarded
@@ -370,7 +397,7 @@ class Lexicon
 
     # Exclude any non-words generated
     generated_syns.select do |syn|
-      contains?(syn)
+      @ngram_frequencies[syn].to_i > 0
     end
   end
 
@@ -379,8 +406,7 @@ class Lexicon
   end
 
 
-  # Search wordnet for the lemma with a given POS and return inflected versions
-  # of each synonym according to the block given.
+  # Search wordnet for the lemma with a given POS and return cleaned syn list
   def wordnet_lookup_syns(lemma, pos)
     # Convert back to wordnet format
     lemma = lemma.tr(' ', '_')
