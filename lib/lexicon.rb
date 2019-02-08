@@ -104,8 +104,8 @@ class Lexicon
     # Can't start with punctuation.
     # Must start with a letter.
     return false unless word =~ /^[a-z][a-z\-\'\ ]{1,15}$/i
-    # Single words must be present in 1grams
-    word[SPACE] || @ngram_frequencies[word].to_i > 0
+    # All words must be present in 1grams
+    word.split(SPACE).all?{ |w| @ngram_frequencies[w].to_i > 0 }
   end
 
   def create_word_list
