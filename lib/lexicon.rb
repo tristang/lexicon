@@ -33,11 +33,22 @@ class Lexicon
     @ngram_frequencies.select! do |k, v|
       # Only letters (upper/lower), hypens, apostrophes, and spaces
       # Exclude _POS tagged entries for now
-      k =~ /^[a-z][a-z\-\'\ ]*$/i &&
+      next false unless k =~ /^[a-z][a-z\-\'\ ]*$/i
       # Exclude uncommon words
-      v >= 5000 &&
+      case k.length
+      when 1
       # 'I' and 'a' are the only single letter words
-      (k.length > 1 || k =~ /Ia/)
+        k =~ /Ia/
+      when 2
+        # From 'kg' and more common
+        v >= 6937175
+      when 3
+        # From 'Zoe' and more common
+        v >= 499130
+      else
+        # Nothing less than this
+        v >= 30_000
+      end
     end
 
     # Save trimmed for reuse
