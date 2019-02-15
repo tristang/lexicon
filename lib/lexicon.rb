@@ -33,11 +33,22 @@ class Lexicon
     @ngram_frequencies.select! do |k, v|
       # Only letters (upper/lower), hypens, apostrophes, and spaces
       # Exclude _POS tagged entries for now
-      k =~ /^[a-z][a-z\-\'\ ]*$/i &&
+      next false unless is_valid_word(k)
       # Exclude uncommon words
-      v >= 5000 &&
-      # 'I' and 'a' are the only single letter words
-      (k.length > 1 || k =~ /Ia/)
+      case k.length
+      when 1
+        # 'I' and 'a' are the only single letter words
+        k =~ /Ia/
+      when 2
+        # From 'kg' and more common
+        v >= 6937175
+      when 3
+        # From 'Zoe' and more common
+        v >= 499130
+      else
+        # Nothing less than this
+        v >= 30_000
+      end
     end
 
     # Save trimmed for reuse
@@ -92,19 +103,24 @@ class Lexicon
       Marshal.dump(@dictionary, file)
     end
 
-    @reverse_dictionary = generate_dictionary(@word_list, reverse: true)
+    # Reverse words for reverse lookups (ends-with search)
+    @reverse_dictionary = generate_dictionary(@word_list.map(&:reverse))
     File.open(@conf[:reverse_dictionary_path], 'w') do |file|
       Marshal.dump(@reverse_dictionary, file)
     end
   end
 
   def is_valid_word(word)
-    # Only letters, apostrophes, spaces and hyphens allowed.
-    # Can't start with punctuation.
+    # Only letters, hyphens, apostrophes, spaces and hyphens allowed.
     # Must start with a letter.
-    return false unless word =~ /^[a-z][a-z\-\'\ ]{1,15}$/i
-    # Single words must be present in 1grams
-    word[SPACE] || @ngram_frequencies[word].to_i > 0
+    # Exclude _POS tagged entries for now
+    word =~ /^[a-z][a-z\-\'\ ]{1,15}$/i
+  end
+
+  def is_present_in_1grams(string)
+    # All words must be present in 1grams
+    words = string.split(SPACE)
+    words.any? && words.all?{ |w| @ngram_frequencies[w].to_i > 0 }
   end
 
   def create_word_list
@@ -114,7 +130,7 @@ class Lexicon
     File.open(@conf[:word_list_source_path], 'r') do |fh|
       fh.each_line do |line|
         line.chomp!
-        if is_valid_word(line)
+        if is_present_in_1grams(line)
           words << line
         else
           discarded << discarded
@@ -132,10 +148,10 @@ class Lexicon
     # Wordnet's cache has one hash for each POS with words as keys and the
     # WordNet space separated database line as values
     WordNet::Lemma.class_variable_get("@@cache").each do |pos, rows|
-      rows.each do |word, data|
-        word = word.gsub('_', ' ')
-        if is_valid_word(word)
-          words << word
+      rows.each do |string, data|
+        string = string.gsub('_', ' ')
+        if is_present_in_1grams(string)
+          words << string
         else
           discarded << discarded
         end
@@ -154,6 +170,25 @@ class Lexicon
     @word_list = words
   end
 
+  def single_words
+    @dictionary.to(
+      '*',
+      # Stop early at space character
+      character_comparator: proc { |_, node| node.character != SPACE },
+      destination_comparator: proc { |_, node| node.is_word },
+      deep_search: true
+    )
+  end
+
+  def phrases
+    @dictionary.to(
+      '*',
+      character_comparator: proc { true },
+      destination_comparator: proc { |_, node| node.is_phrase },
+      deep_search: true
+    )
+  end
+
   def find(string)
     # Call on root of dictionary
     @dictionary.to(string)
@@ -163,6 +198,8 @@ class Lexicon
     @dictionary.to(
       masked_word,
       character_comparator: proc do |target, node|
+        # Don't find phrases
+        node.character != SPACE &&
         # Matches character at position or target char is wildcard
         node.character == target[node.depth] || target[node.depth] == '?'
       end
@@ -174,11 +211,14 @@ class Lexicon
       word_start,
       deep_search: true,
       character_comparator: proc do |target, node|
-        node.character == target[node.depth] || node.depth > target.length - 1
+        # Don't find phrases
+        node.character != SPACE &&
+        # Letter must match, or we're past the end of the target start
+        (node.character == target[node.depth] || node.depth > target.length - 1)
       end,
       destination_comparator: proc do |target, node|
-        (node.full_path.join == target || node.depth > target.length - 1) &&
-          node.is_word
+        (node.depth >= target.length - 1) &&
+        node.is_word && !node.is_phrase
       end
     )
   end
@@ -189,7 +229,7 @@ class Lexicon
   end
 
   def contains?(word)
-    self[word]&.is_word
+    lookup(word)&.is_word
   end
 
   def lookup(string)
@@ -203,10 +243,8 @@ class Lexicon
   alias_method :[], :lookup
 
   # Building methods
-  def generate_dictionary(words, reverse: false)
-    print "Generating #{'reverse' if reverse} dictionary tree... "
-    # Reverse words for reverse lookups (ends-with search)
-    words = words.map(&:reverse) if reverse
+  def generate_dictionary(words)
+    print "Generating dictionary tree... "
     # Make the dictionary
     dictionary = DictNode.new
     words.each do |word|
@@ -219,6 +257,7 @@ class Lexicon
       end
       # Mark the final char as a word ending
       node.is_word = true
+      node.is_phrase = word.include?(SPACE)
     end
     puts "done."
     dictionary
@@ -276,7 +315,7 @@ class Lexicon
   end
 
   def link_all_synonyms
-    bar = ProgressBar.create(title: 'Syns', total: @size, throttle_rate: 0.1)
+    bar = ProgressBar.create(title: 'Linking synonyms', total: @size, throttle_rate: 0.1)
     link_synonyms(@dictionary) do
       bar.increment
     end
@@ -463,7 +502,7 @@ private
 end
 
 class DictNode < Hash
-  attr_accessor :is_word, :synonyms, :lemma
+  attr_accessor :is_word, :is_phrase, :synonyms, :lemma
   attr_reader :character, :inflections
 
   def initialize(character = nil, parent = nil)
