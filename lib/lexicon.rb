@@ -37,7 +37,7 @@ class Lexicon
       # Exclude uncommon words
       case k.length
       when 1
-      # 'I' and 'a' are the only single letter words
+        # 'I' and 'a' are the only single letter words
         k =~ /Ia/
       when 2
         # From 'kg' and more common
@@ -229,6 +229,7 @@ class Lexicon
       end
       # Mark the final char as a word ending
       node.is_word = true
+      node.is_phrase = word.include?(SPACE)
     end
     puts "done."
     dictionary
@@ -473,7 +474,7 @@ private
 end
 
 class DictNode < Hash
-  attr_accessor :is_word, :synonyms, :lemma
+  attr_accessor :is_word, :is_phrase, :synonyms, :lemma
   attr_reader :character, :inflections
 
   def initialize(character = nil, parent = nil)
