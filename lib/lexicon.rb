@@ -275,7 +275,7 @@ class Lexicon
   end
 
   def link_all_synonyms
-    bar = ProgressBar.create(title: 'Syns', total: @size, throttle_rate: 0.1)
+    bar = ProgressBar.create(title: 'Linking synonyms', total: @size, throttle_rate: 0.1)
     link_synonyms(@dictionary) do
       bar.increment
     end
