@@ -205,11 +205,14 @@ class Lexicon
       word_start,
       deep_search: true,
       character_comparator: proc do |target, node|
-        node.character == target[node.depth] || node.depth > target.length - 1
+        # Don't find phrases
+        node.character != SPACE &&
+        # Letter must match, or we're past the end of the target start
+        (node.character == target[node.depth] || node.depth > target.length - 1)
       end,
       destination_comparator: proc do |target, node|
-        (node.full_path.join == target || node.depth > target.length - 1) &&
-          node.is_word
+        (node.depth >= target.length - 1) &&
+        node.is_word && !node.is_phrase
       end
     )
   end
