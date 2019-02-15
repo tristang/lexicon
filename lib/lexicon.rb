@@ -33,7 +33,7 @@ class Lexicon
     @ngram_frequencies.select! do |k, v|
       # Only letters (upper/lower), hypens, apostrophes, and spaces
       # Exclude _POS tagged entries for now
-      next false unless k =~ /^[a-z][a-z\-\'\ ]*$/i
+      next false unless is_valid_word(k)
       # Exclude uncommon words
       case k.length
       when 1
@@ -111,12 +111,16 @@ class Lexicon
   end
 
   def is_valid_word(word)
-    # Only letters, apostrophes, spaces and hyphens allowed.
-    # Can't start with punctuation.
+    # Only letters, hyphens, apostrophes, spaces and hyphens allowed.
     # Must start with a letter.
-    return false unless word =~ /^[a-z][a-z\-\'\ ]{1,15}$/i
+    # Exclude _POS tagged entries for now
+    word =~ /^[a-z][a-z\-\'\ ]{1,15}$/i
+  end
+
+  def is_present_in_1grams(string)
     # All words must be present in 1grams
-    word.split(SPACE).all?{ |w| @ngram_frequencies[w].to_i > 0 }
+    words = string.split(SPACE)
+    words.any? && words.all?{ |w| @ngram_frequencies[w].to_i > 0 }
   end
 
   def create_word_list
@@ -126,7 +130,7 @@ class Lexicon
     File.open(@conf[:word_list_source_path], 'r') do |fh|
       fh.each_line do |line|
         line.chomp!
-        if is_valid_word(line)
+        if is_present_in_1grams(line)
           words << line
         else
           discarded << discarded
@@ -144,10 +148,10 @@ class Lexicon
     # Wordnet's cache has one hash for each POS with words as keys and the
     # WordNet space separated database line as values
     WordNet::Lemma.class_variable_get("@@cache").each do |pos, rows|
-      rows.each do |word, data|
-        word = word.gsub('_', ' ')
-        if is_valid_word(word)
-          words << word
+      rows.each do |string, data|
+        string = string.gsub('_', ' ')
+        if is_present_in_1grams(string)
+          words << string
         else
           discarded << discarded
         end
