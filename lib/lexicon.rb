@@ -201,7 +201,7 @@ class Lexicon
   end
 
   def contains?(word)
-    self[word]&.is_word
+    lookup(word)&.is_word
   end
 
   def lookup(string)
