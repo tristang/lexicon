@@ -166,6 +166,25 @@ class Lexicon
     @word_list = words
   end
 
+  def single_words
+    @dictionary.to(
+      '*',
+      # Stop early at space character
+      character_comparator: proc { |_, node| node.character != SPACE },
+      destination_comparator: proc { |_, node| node.is_word },
+      deep_search: true
+    )
+  end
+
+  def phrases
+    @dictionary.to(
+      '*',
+      character_comparator: proc { true },
+      destination_comparator: proc { |_, node| node.is_phrase },
+      deep_search: true
+    )
+  end
+
   def find(string)
     # Call on root of dictionary
     @dictionary.to(string)
