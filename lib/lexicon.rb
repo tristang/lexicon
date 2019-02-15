@@ -194,6 +194,8 @@ class Lexicon
     @dictionary.to(
       masked_word,
       character_comparator: proc do |target, node|
+        # Don't find phrases
+        node.character != SPACE &&
         # Matches character at position or target char is wildcard
         node.character == target[node.depth] || target[node.depth] == '?'
       end
