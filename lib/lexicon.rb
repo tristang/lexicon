@@ -242,6 +242,16 @@ class Lexicon
   end
   alias_method :[], :lookup
 
+  def lookup_insensitive(string)
+    @dictionary.to(
+      string.downcase,
+      character_comparator: proc do |target, node|
+        # Matches character at position (case insensitive)
+        node.character.downcase == target[node.depth]
+      end
+    ).any?
+  end
+
   # Building methods
   def generate_dictionary(words)
     print "Generating dictionary tree... "
@@ -258,6 +268,7 @@ class Lexicon
       # Mark the final char as a word ending
       node.is_word = true
       node.is_phrase = word.include?(SPACE)
+      node.count = @ngram_frequencies[word]
     end
     puts "done."
     dictionary
@@ -516,7 +527,7 @@ class DictNode < Hash
     ret = []
 
     # Continue if current character matches or at root node
-    if character_match?(target, character_comparator) || !@character
+    if !@character || character_match?(target, character_comparator)
       # Destination matches get stored for return
       if destination_match?(target, destination_comparator)
         ret << full_path.join
